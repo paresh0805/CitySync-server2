@@ -1,66 +1,55 @@
-import gradio as gr
-import tensorflow as tf
-import numpy as np
-from PIL import Image
-import json
+from flask import Flask, request, jsonify
 import os
+from werkzeug.utils import secure_filename
 
-# === Configuration ===
-MODEL_PATH = "road_classifier.h5"
-CLASS_MAP_PATH = "class_indices.json"
-IMG_SIZE = (224, 224)
+app = Flask(__name__)
 
-# === Load model ===
-try:
-    model = tf.keras.models.load_model(MODEL_PATH)
-    print("Model loaded successfully")
-except Exception as e:
-    print(f"Error loading model: {e}")
-    model = None
+# 📂 Folder to store uploaded images
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# === Load class indices ===
-class_indices = {}
-try:
-    with open(CLASS_MAP_PATH, "r") as f:
-        class_indices = json.load(f)
-    # Check for duplicate indices
-    if len(class_indices) != len(set(class_indices.values())):
-        print("Warning: Duplicate indices found in class_indices")
-    index_to_class = {v: k for k, v in class_indices.items()}
-except Exception as e:
-    print(f"Error loading class indices: {e}")
-    index_to_class = {}
-
-# === Prediction function ===
-def predict(img):
-    if model is None or not index_to_class:
-        return {"error": "Model or class indices not loaded properly"}
-    if img is None:
-        return {"error": "No image uploaded"}
-
+@app.route("/issue", methods=["POST"])
+def report_issue():
     try:
-        # Convert and resize image
-        img = img.convert("RGB")
-        img = img.resize(IMG_SIZE)
-        img_array = np.array(img) / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
+        description = request.form.get("description")
+        location = request.form.get("location")
+        citizen_id = request.form.get("citizenId")
+        issue_type = request.form.get("issueType")
+        image = request.files.get("image")
 
-        # Get predictions
-        preds = model.predict(img_array)
-        top_indices = np.argsort(preds[0])[::-1][:3]  # Top 3 predictions
-        result = {index_to_class.get(i, f"Unknown_{i}"): float(preds[0][i]) for i in top_indices}
-        return result
+        if not description or not location or not citizen_id or not image:
+            return jsonify({"success": False, "message": "Missing required fields"}), 400
+
+        # Save uploaded image
+        filename = secure_filename(image.filename)
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        image.save(filepath)
+
+        # You can insert issue details into DB here instead of just printing
+        print("📌 New Issue Reported:")
+        print("Citizen ID:", citizen_id)
+        print("Location:", location)
+        print("Issue Type:", issue_type)
+        print("Description:", description)
+        print("Image saved at:", filepath)
+
+        return jsonify({
+            "success": True,
+            "message": "Issue reported successfully",
+            "data": {
+                "citizenId": citizen_id,
+                "location": location,
+                "issueType": issue_type,
+                "description": description,
+                "imagePath": filepath
+            }
+        })
+
     except Exception as e:
-        return {"error": str(e)}
+        print("❌ Error:", str(e))
+        return jsonify({"success": False, "message": "Server error"}), 500
 
-# === Gradio Interface ===
-demo = gr.Interface(
-    fn=predict,
-    inputs=gr.Image(type="pil"),
-    outputs=gr.Label(num_top_classes=3),
-    title="Road Issue Classifier",
-    description="Upload a road image and get predicted issue type with confidence."
-)
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)  # Full launch configuration
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
